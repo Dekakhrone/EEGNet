@@ -21,7 +21,7 @@ axes = {
 }
 
 
-def permutate(*arr, saveOrder=False, seedValue=1234):
+def permutate(arr, saveOrder=False, seedValue=1234):
 	idxs = list(range(len(arr)))
 
 	if saveOrder:
