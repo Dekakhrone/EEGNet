@@ -1,7 +1,9 @@
 import os
 from enum import Enum
+from copy import deepcopy
 from random import shuffle, seed
 
+import h5py
 import numpy as np
 from scipy.io import loadmat
 from mne.filter import resample
@@ -126,36 +128,83 @@ class DataHandler:
 			self.stored[name] = {
 				"data": data,
 				"labels": labels,
-				"format": self.format,
+				"format": self.format.value,
 				"sample_rate": currentSR
 			}
 
 		return data, labels
 
 
-	def loadHDF(self, path, store=False):
-		pass
+	def loadHDF(self, filepath, store=False):
+		file = h5py.File(filepath, "r")
+
+		container = {}
+		try:
+			for name in file.keys():
+				group = file[name]
+
+				container[name] = {
+					"data": group["data"][:],
+					"labels": group["labels"][:],
+					"format": group.attrs.get("format"),
+					"sample_rate": group.attrs.get("sample_rate")
+				}
+		finally:
+			file.close()
+
+		if store:
+			self.stored = deepcopy(container)
+
+		return container
 
 
-	def loadNumpy(self, path, store=False):
-		pass
+	def saveHDF(self, data, dirpath, filename, meta=True):
+		os.makedirs(dirpath, exist_ok=True)
 
+		filename = os.path.splitext(filename)[0] + ".hdf"
+		filepath = os.path.join(dirpath, filename)
 
-	def saveHDF(self, data, path):
-		pass
+		file = h5py.File(filepath, "w")
 
+		if isinstance(data, dict):
+			for name, ndata in data.items():
+				group = file.create_group(name)
 
-	def saveNumpy(self, data, path):
-		pass
+				for attr, value in ndata.items():
+					if attr in ["format", "sample_rate"] and meta:
+						group.attrs[attr] = value
+						continue
+
+					group.create_dataset(attr, data=value)
+		elif isinstance(data, tuple):
+			data, labels = data
+
+			file.create_dataset("data", data=data)
+			file.create_dataset("labels", data=labels)
+		elif isinstance(data, np.ndarray):
+			file.create_dataset("data", data=data)
+		else:
+			raise TypeError
+
+		file.close()
+		print("Data has been written to {}".format(filepath))
 
 
 def main():
 	loader = DataHandler(epochs=(-0.5, 1), dformat=Formats.ttc)
 
-	data = loader.loadMatlab(r'D:\data\Research\BCI_dataset\NewData\25', sourceSR=500, targetSR=323,
-	                             windows=[(0.2, 0.5)], baselineWindow=(0.2, 0.3), store=True, name="25")
+	path = r'D:\data\Research\BCI_dataset\NewData'
 
-	print()
+	for idx in ["25", "26"]:
+		_ = loader.loadMatlab(os.path.join(path, idx), sourceSR=500, targetSR=323, windows=[(0.2, 0.5)],
+		                         baselineWindow=(0.2, 0.3), store=True, name=idx)
+
+	wpath = r'D:\data\Research\BCI_dataset\NewData'
+	loader.saveHDF(loader.stored, wpath, "test_dataset.hdf", meta=False)
+
+	loader.stored = {}
+	loader.loadHDF(os.path.join(wpath, "test_dataset.hdf"), store=True)
+
 
 if __name__ == '__main__':
 	main()
