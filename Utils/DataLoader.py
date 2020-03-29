@@ -1,7 +1,7 @@
 import os
 from enum import Enum
 from copy import deepcopy
-from random import shuffle, seed
+from random import shuffle, seed, randint
 
 import h5py
 import numpy as np
@@ -21,6 +21,34 @@ axes = {
 	Formats.ttc: (2, 0, 1),
 	Formats.tct: (2, 1, 0)
 }
+
+
+def splitDataset(data, labels, trainPart=0.8, valPart=0.2, permutation=True, seed=None):
+	assert labels.shape[0] == data.shape[0]
+	assert trainPart + valPart <= 1
+
+	length = labels.shape[0]
+	testPart = 1.0 - trainPart - valPart
+
+	partList = ["train", "val", "test"]
+	parts = {"train": trainPart, "val": valPart, "test": testPart}
+
+	dataset = {}
+	start = 0
+	for part in partList:
+		ratio = parts.get(part)
+		end = start + round(ratio * length)
+
+		seed = randint(0, 2**16) if seed is None else seed
+
+		dataset[part] = (
+			data[start:end] if not permutation else permutate(data[start:end], saveOrder=True, seedValue=seed),
+			labels[start:end] if not permutation else permutate(labels[start:end], saveOrder=True, seedValue=seed)
+		)
+
+		start = end
+
+	return dataset
 
 
 def permutate(arr, saveOrder=False, seedValue=1234):
