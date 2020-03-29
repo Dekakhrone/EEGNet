@@ -1,0 +1,7 @@
+train_config:
+  epochs: 100
+  batchsize: 128
+
+paths:
+  checkpoint: "./Data/Experiments/Optuna"
+  logs: "./Data/Experiments/Optuna/Logs"
