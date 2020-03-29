@@ -7,12 +7,15 @@ from keras.constraints import max_norm
 
 class EEGNet(Sequential):
 	def __init__(self, categoriesN, electrodes=64, samples=128, temporalLength=None, dropoutRate=0.5, F1=8, D=2, F2=16,
-	             normRate=0.25):
+	             normRate=0.25, **kwargs):
 		super().__init__()
+
+		poolPad = kwargs.get("poolPad", "valid")
+		poolKernel = kwargs.get("poolKernel", None)
 
 		inputShape = (1, electrodes, samples)
 		temporalLength = samples // 2 if temporalLength is None else temporalLength
-		avgKernel = (4 * samples) // 128
+		avgKernel = (4 * samples) // 128 if poolKernel is None else poolKernel
 
 		layers = [
 			Input(shape=inputShape, name="input"),
@@ -24,14 +27,14 @@ class EEGNet(Sequential):
 			                data_format="channels_first", name="dp_conv_0"),
 			BatchNormalization(axis=1, name="bn_1"),
 			Activation(activation="elu", name="act_0"),
-			AvgPool2D(pool_size=(1, avgKernel), name="avg_pool_0", data_format="channels_first"),
+			AvgPool2D(pool_size=(1, avgKernel), padding=poolPad, name="avg_pool_0", data_format="channels_first"),
 			Dropout(dropoutRate, name="dropout_0"),
 
 			SeparableConv2D(filters=F2, kernel_size=(1, temporalLength // 4), padding="same", use_bias=False,
 			                data_format="channels_first", name="spr_conv_0"),
 			BatchNormalization(axis=1, name="bn_2"),
 			Activation(activation="elu", name="act_1"),
-			AvgPool2D(pool_size=(1, avgKernel * 2), name="avg_pool_1", data_format="channels_first"),
+			AvgPool2D(pool_size=(1, avgKernel * 2), padding=poolPad, name="avg_pool_1", data_format="channels_first"),
 			Dropout(dropoutRate, name="dropout_1"),
 
 			Flatten(name="flatten"),
