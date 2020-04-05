@@ -51,6 +51,39 @@ def splitDataset(data, labels, trainPart=0.8, valPart=0.2, permutation=True, see
 	return dataset
 
 
+def crossValGenerator(data, labels, trainPart=0.8, valPart=0.2, permutation=True, seed=None):
+	assert labels.shape[0] == data.shape[0]
+	assert trainPart + valPart <= 1
+
+	seed = randint(0, 2 ** 16) if seed is None else seed
+
+	length = labels.shape[0]
+	valSamples = int(length * valPart)
+	repeats = int(length / valSamples)
+
+	idxs = [(i * valSamples, (i + 1) * valSamples) for i in range(repeats)]
+
+	for start, end in idxs:
+		valData = data[start:end]
+		valLabels = labels[start:end]
+
+		trainData = np.concatenate((data[:start], data[end:]), axis=0)
+		trainLabels = np.concatenate((labels[:start], labels[end:]), axis=0)
+
+		dataset = {
+			"train": (
+				trainData if not permutation else permutate(trainData, saveOrder=True, seedValue=seed),
+				trainLabels if not permutation else permutate(trainLabels, saveOrder=True, seedValue=seed)
+			),
+			"val": (
+				valData if not permutation else permutate(valData, saveOrder=True, seedValue=seed),
+				valLabels if not permutation else permutate(valLabels, saveOrder=True, seedValue=seed)
+			)
+		}
+
+		yield dataset
+
+
 def permutate(arr, saveOrder=False, seedValue=1234):
 	idxs = list(range(len(arr)))
 
