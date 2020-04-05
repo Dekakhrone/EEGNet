@@ -189,7 +189,8 @@ def studyInfo(study, bestN=7, file=None):
 		studyDF.to_csv(file)
 		logger.info("Study file has been written to {}", file)
 
-def main():
+
+def separateTrain():
 	dataPath = r"D:\data\Research\BCI_dataset\NewData"
 	optunaFile = r"D:\research\EEGNet\Data\Experiments\Optuna\optuna.log"
 
@@ -248,6 +249,51 @@ def main():
 			studyInfo(study)
 		except Exception as e:
 			logger.error("Optuna train has been failed for patient #{} with error: {}", pat, e)
+
+
+def jointTrainOptuna():
+	loader = DataHandler(epochs=(-0.5, 1), dformat=Formats.tct)
+	patients = [25, 26, 27, 28, 29, 30, 32, 33, 34, 35, 36, 37, 38]
+	patients = [25, 26]
+	patients = [str(elem) for elem in patients]
+
+	logger.add(
+		sink="./Data/Experiments/Optuna/optuna.log",
+		level="INFO"
+	)
+
+	dataset = loader.loadHDF(
+		filepath=r"D:\data\Research\BCI_dataset\NewData\All_patients_sr323.hdf",
+		keys=patients
+	)
+
+	trainSet = {}
+	testSet = {}
+	for key, value in dataset.items():
+		data = value["data"]
+		labels = value["labels"]
+
+		data = np.expand_dims(data, axis=1)
+		dataset = splitDataset(data, labels, trainPart=0.8, valPart=0.0, permutation=True, seed=42069)
+
+		trainSet[key] = dataset["train"]
+		testSet[key] = dataset["test"]
+
+	optunaTrainer = OptunaTrainer(
+		checkpointPath="./Data/Experiments/Optuna",
+		batchsize=64,
+		epochs=3
+	)
+
+	study = optuna.create_study(direction="maximize")
+
+	trainer = partial(optunaTrainer, dataset=trainSet, crossVal=True)
+
+	study.optimize(trainer, n_trials=3, show_progress_bar=True)
+	studyInfo(
+		study,
+		file="./Data/Experiments/Optuna/optuna_results.csv"
+	)
 
 
 if __name__ == "__main__":
