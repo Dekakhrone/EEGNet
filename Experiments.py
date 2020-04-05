@@ -168,12 +168,11 @@ def train(model, dataset, weigthsPath, logPath=None, epochs=100, batchsize=128):
 	return checkpointPath
 
 
-def studyInfo(study):
+def studyInfo(study, bestN=7, file=None):
 	logger.info("Number of finished trials: {}", len(study.trials))
 
-	logger.info("Best 5 trials:")
-	trials = study.trials
-	trials = sorted(trials, key=lambda elem: elem.value, reverse=True)[:5]
+	logger.info("Best {} trials:".format(bestN))
+	trials = sorted(study.trials, key=lambda elem: elem.value, reverse=True)[:bestN]
 
 	for i, trial in enumerate(trials):
 		logger.info("Trial {}", i)
@@ -183,6 +182,12 @@ def studyInfo(study):
 		for key, value in trial.params.items():
 			logger.info("\t\t{}: {}", key, value)
 
+	if file is not None:
+		os.makedirs(os.path.dirname(file), exist_ok=True)
+		studyDF = study.trials_dataframe()
+
+		studyDF.to_csv(file)
+		logger.info("Study file has been written to {}", file)
 
 def main():
 	dataPath = r"D:\data\Research\BCI_dataset\NewData"
