@@ -4,11 +4,12 @@ import yaml
 import optuna
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.callbacks import ModelCheckpoint
 from loguru import logger
+from functools import partial
+from tensorflow.keras.callbacks import ModelCheckpoint
 
 from Model import EEGNet
-from Utils.DataLoader import DataHandler, Formats, splitDataset
+from Utils.DataLoader import DataHandler, Formats, splitDataset, crossValGenerator
 from Utils.Metrics import ROC
 
 
@@ -17,34 +18,62 @@ tf.config.experimental.set_memory_growth(gpu, True)
 
 
 class OptunaTrainer:
-	def __init__(self, config, dataset):
-		config = self._loadConfig(config)
+	def __init__(self, checkpointPath, epochs, batchsize, logPath=None):
+		self.checkpointPath = checkpointPath
+		self.logpath = logPath
 
-		self.checkpointPath = config["paths"]["checkpoint"]
-		self.logPath = config["paths"]["logs"]
-
-		self.epochs = config["train_config"]["epochs"]
-		self.batchsize = config["train_config"]["batchsize"]
-
-		self.dataset = dataset
+		self.epochs = epochs
+		self.batchsize = batchsize
 
 
-	def __call__(self, trial):
-		shape = self.dataset["train"][0].shape[-2:]
+	def __call__(self, trial, dataset, crossVal=False):
+		if isinstance(dataset, tuple):
+			dataset = {
+				"noname": dataset
+			}
+
+		info = "Trial #{} auc values:".format(trial.number)
+		aucSum = 0
+		for key, value in dataset.items():
+			auc = self.handle(trial, value, crossVal=crossVal)
+			info += "\t{}: {:.2f}".format(key, auc)
+
+			aucSum += auc
+
+		logger.info(info)
+
+		return aucSum / len(dataset)
+
+
+	def handle(self, trial, dataset, crossVal=False):
+		shape = dataset[0].shape[-2:]
 		model = self.buildModel(trial, shape)
+		# model.save_weights(os.path.join(self.checkpointPath, "temp_weights.hdf"))
 
-		checkpointPath = train(
-			model=model,
-			dataset=self.dataset,
-			weigthsPath=self.checkpointPath,
-			logPath=self.logPath,
-			epochs=self.epochs,
-			batchsize=self.batchsize
-		)
+		dataset = splitDataset(*dataset, trainPart=0.8, valPart=0.0)
 
-		auc = test(model, checkpointPath, self.dataset["test"])
+		trainSet = dataset["train"]
+		testSet = dataset["test"]
 
-		return auc
+		dataset = crossValGenerator(*trainSet, trainPart=0.8, valPart=0.2) if crossVal else [dataset]
+
+		auc = 0
+		for i, set_ in enumerate(dataset):
+			checkpointPath = train(
+				model=model,
+				dataset=set_,
+				weigthsPath=self.checkpointPath,
+				logPath=self.logpath,
+				epochs=self.epochs,
+				batchsize=self.batchsize
+			)
+
+			auc += test(model, checkpointPath, testSet)
+
+			tf.keras.backend.clear_session()
+			# model.load_weights(os.path.join(self.checkpointPath, "temp_weights.hdf"))
+
+		return auc / (i + 1)
 
 
 	@staticmethod
@@ -73,7 +102,7 @@ class OptunaTrainer:
 
 		if optimizer_selected == "RMSprop":
 			kwargs["learning_rate"] = trial.suggest_loguniform("rmsprop_learning_rate", 1e-5, 1e-1)
-			kwargs["decay"] = trial.suggest_uniform("rmsprop_decay", 0.85, 0.99)
+			kwargs["decay"] = trial.suggest_discrete_uniform("rmsprop_decay", 0.85, 0.99, 0.01)
 			kwargs["momentum"] = trial.suggest_loguniform("rmsprop_momentum", 1e-5, 1e-1)
 		elif optimizer_selected == "Adam":
 			kwargs["learning_rate"] = trial.suggest_loguniform("adam_learning_rate", 1e-5, 1e-1)
@@ -88,8 +117,8 @@ class OptunaTrainer:
 		assert samples // 2 > 16
 
 		temporalLength = int(trial.suggest_discrete_uniform("temporal_length", 16, samples // 2, 4))
-		dropoutRate = trial.suggest_discrete_uniform("dropout_rate", 0.1, 0.5, 0.1)
-		D = trial.suggest_int("D", 1, 4)
+		dropoutRate = trial.suggest_discrete_uniform("dropout_rate", 0.1, 0.5, 0.05)
+		D = trial.suggest_int("depth_multiplier", 1, 4)
 		poolKernel = int(trial.suggest_discrete_uniform("pool_kernel", 4, 16, 2))
 
 		model = EEGNet(
@@ -125,14 +154,15 @@ def test(model, checkpointPath, dataset):
 	return auc
 
 
-def train(model, dataset, weigthsPath, logPath, epochs=100, batchsize=128):
+def train(model, dataset, weigthsPath, logPath=None, epochs=100, batchsize=128):
 	for path in [weigthsPath, logPath]:
-		os.makedirs(path, exist_ok=True)
+		if path is not None:
+			os.makedirs(path, exist_ok=True)
 
 	checkpointPath = os.path.join(weigthsPath, "best.h5")
-	checkpointer = ModelCheckpoint(filepath=checkpointPath, verbose=1, save_best_only=True)
+	checkpointer = ModelCheckpoint(filepath=checkpointPath, verbose=0, save_best_only=True)
 
-	model.fit(*dataset["train"], batch_size=batchsize, epochs=epochs, verbose=2, validation_data=dataset["val"],
+	model.fit(*dataset["train"], batch_size=batchsize, epochs=epochs, verbose=0, validation_data=dataset["val"],
 	          callbacks=[checkpointer])
 
 	return checkpointPath
@@ -216,4 +246,4 @@ def main():
 
 
 if __name__ == "__main__":
-	main()
+	jointTrainOptuna()
