@@ -196,12 +196,15 @@ class DataHandler:
 		return data, labels
 
 
-	def loadHDF(self, filepath, store=False):
+	def loadHDF(self, filepath, store=False, keys=None):
 		file = h5py.File(filepath, "r")
 
 		container = {}
 		try:
 			for name in file.keys():
+				if name not in keys:
+					continue
+
 				group = file[name]
 
 				container[name] = {
