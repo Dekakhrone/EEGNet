@@ -196,6 +196,7 @@ class DataHandler:
 
 		if isinstance(data, dict):
 			for name, ndata in data.items():
+				name = str(name)
 				group = file.create_group(name)
 
 				for attr, value in ndata.items():

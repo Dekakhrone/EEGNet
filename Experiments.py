@@ -5,6 +5,7 @@ import optuna
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.callbacks import ModelCheckpoint
+from loguru import logger
 
 from Model import EEGNet
 from Utils.DataLoader import DataHandler, Formats, splitDataset
@@ -137,39 +138,81 @@ def train(model, dataset, weigthsPath, logPath, epochs=100, batchsize=128):
 	return checkpointPath
 
 
-def main():
-	loader = DataHandler(epochs=(-0.5, 1), dformat=Formats.tct)
-	data, labels = loader.loadMatlab(
-		path=r'D:\data\Research\BCI_dataset\NewData\25',
-		sourceSR=500,
-		targetSR=323,
-		windows=[(0.2, 0.5)],
-		baselineWindow=(0.2, 0.3),
-		shuffle=True
-	)
+def studyInfo(study):
+	logger.info("Number of finished trials: {}", len(study.trials))
 
-	data = np.expand_dims(data, axis=1)
-
-	dataset = splitDataset(data, labels, trainPart=0.8, valPart=0.1, permutation=True, seed=42069)
-
-	optunaTrainer = OptunaTrainer(config="config.yml", dataset=dataset)
-
-	study = optuna.create_study(direction="maximize")
-	study.optimize(optunaTrainer, n_trials=10)
-
-	print("Number of finished trials: ", len(study.trials))
-
-	print("Best 5 trials:")
+	logger.info("Best 5 trials:")
 	trials = study.trials
 	trials = sorted(trials, key=lambda elem: elem.value, reverse=True)[:5]
 
 	for i, trial in enumerate(trials):
-		print("Trial %d" % i)
-		print("\tValue: ", trial.value)
+		logger.info("Trial {}", i)
+		logger.info("\tValue: {:.2f}", trial.value)
 
-		print("\tParams: ")
+		logger.info("\tParams: ")
 		for key, value in trial.params.items():
-			print("\t\t{}: {}".format(key, value))
+			logger.info("\t\t{}: {}", key, value)
+
+
+def main():
+	dataPath = r"D:\data\Research\BCI_dataset\NewData"
+	optunaFile = r"D:\research\EEGNet\Data\Experiments\Optuna\optuna.log"
+
+	logger.add(optunaFile, level="INFO")
+	loader = DataHandler(epochs=(-0.5, 1), dformat=Formats.tct)
+
+	patients = [25, 26, 27, 28, 29, 30, 32, 33, 34, 35, 36, 37, 38]
+
+	for pat in patients:
+		loader.loadMatlab(
+			path=os.path.join(dataPath, str(pat)),
+			sourceSR=500,
+			targetSR=323,
+			windows=[(0.2, 0.5)],
+			baselineWindow=(0.2, 0.3),
+			shuffle=True,
+			store=True,
+			name=pat
+		)
+
+	loader.saveHDF(
+		data=loader.stored,
+		dirpath=dataPath,
+		filename="All_patients_sr323"
+	)
+
+	for pat, value in loader.stored.items():
+		logger.debug("")
+
+		data = value["data"]
+		labels = value["labels"]
+
+		data = np.expand_dims(data, axis=1)
+
+		dataset = splitDataset(data, labels, trainPart=0.8, valPart=0.1, permutation=True, seed=42069)
+
+		config = {
+			"train_config": {
+				"epochs": 500,
+				"batchsize": 64
+			},
+			"paths": {
+				"checkpoint": "./Data/Experiments/Optuna/%d" % pat,
+				"logs": "./Data/Experiments/Optuna/%d/Logs" % pat
+			}
+		}
+
+		optunaTrainer = OptunaTrainer(config=config, dataset=dataset)
+
+		study = optuna.create_study(direction="maximize")
+
+		try:
+			study.optimize(optunaTrainer, n_trials=700, show_progress_bar=True)
+
+			logger.info("Optuna train has been finished for patient #{}", pat)
+			studyInfo(study)
+		except Exception as e:
+			logger.error("Optuna train has been failed for patient #{} with error: {}", pat, e)
 
 
 if __name__ == "__main__":
