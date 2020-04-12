@@ -33,47 +33,31 @@ class OptunaTrainer:
 			}
 
 		info = "Trial #{} auc values:".format(trial.number)
-		aucSum = 0
+		auc = []
 		for key, value in dataset.items():
-			auc = self.handle(trial, value, crossVal=crossVal)
+			shape = value[0].shape[-2:]
+			model = self.buildModel(trial, shape)
+			_auc = train(
+				model=model,
+				dataset=value,
+				weigthsPath=self.checkpointPath,
+				epochs=self.epochs,
+				batchsize=self.batchsize,
+				crossVal=crossVal
+			)
 			info += "\t{}: {:.2f}".format(key, auc)
 
-			aucSum += auc
+			auc.append(_auc)
+
+		mean = np.mean(auc).round(2)
+		median = np.median(auc).round(2)
+
+		info += "\t Mean value: {}\tMedian value {}".format(mean, median)
 
 		logger.info(info)
+		logger.info(trial.params)
 
-		return aucSum / len(dataset)
-
-
-	def handle(self, trial, dataset, crossVal=False):
-		shape = dataset[0].shape[-2:]
-		model = self.buildModel(trial, shape)
-		# model.save_weights(os.path.join(self.checkpointPath, "temp_weights.hdf"))
-
-		dataset = splitDataset(*dataset, trainPart=0.8, valPart=0.0)
-
-		trainSet = dataset["train"]
-		testSet = dataset["test"]
-
-		dataset = crossValGenerator(*trainSet, trainPart=0.8, valPart=0.2) if crossVal else [dataset]
-
-		auc = 0
-		for i, set_ in enumerate(dataset):
-			checkpointPath = train(
-				model=model,
-				dataset=set_,
-				weigthsPath=self.checkpointPath,
-				logPath=self.logpath,
-				epochs=self.epochs,
-				batchsize=self.batchsize
-			)
-
-			auc += test(model, checkpointPath, testSet)
-
-			tf.keras.backend.clear_session()
-			# model.load_weights(os.path.join(self.checkpointPath, "temp_weights.hdf"))
-
-		return auc / (i + 1)
+		return mean
 
 
 	@staticmethod
@@ -143,26 +127,54 @@ class OptunaTrainer:
 		return model
 
 
-def test(model, checkpointPath, dataset):
+def test(model, checkpointPath, dataset, **kwargs):
 	model.load_weights(checkpointPath)
 
 	data, labels = dataset
 
 	pred = model.predict(data)[:, 1]
-	auc = ROC(labels, pred)
+	auc = ROC(labels, pred, **kwargs)
 
 	return auc
 
 
-def train(model, dataset, weigthsPath, logPath=None, epochs=100, batchsize=128):
-	for path in [weigthsPath, logPath]:
-		if path is not None:
-			os.makedirs(path, exist_ok=True)
+def train(model, dataset, weigthsPath, epochs=100, batchsize=128, crossVal=False, verbose=0):
+	dataset = splitDataset(*dataset, trainPart=0.8, valPart=0.0)
+
+	trainSet = dataset["train"]
+	testSet = dataset["test"]
+
+	if crossVal:
+		trainSet = crossValGenerator(*trainSet, trainPart=0.8, valPart=0.2)
+	else:
+		trainSet = splitDataset(*trainSet, trainPart=0.8, valPart=0.2)
+		trainSet = [trainSet]
+
+	auc = []
+	for i, set_ in enumerate(trainSet):
+		checkpointPath = _train(
+			model=model,
+			dataset=set_,
+			weigthsPath=weigthsPath,
+			epochs=epochs,
+			batchsize=batchsize,
+			verbose=verbose
+		)
+
+		auc.append(test(model, checkpointPath, testSet))
+
+		tf.keras.backend.clear_session()
+
+	return np.mean(auc)
+
+
+def _train(model, dataset, weigthsPath, epochs=100, batchsize=128, verbose=0):
+	os.makedirs(weigthsPath, exist_ok=True)
 
 	checkpointPath = os.path.join(weigthsPath, "best.h5")
-	checkpointer = ModelCheckpoint(filepath=checkpointPath, verbose=0, save_best_only=True)
+	checkpointer = ModelCheckpoint(filepath=checkpointPath, verbose=verbose, save_best_only=True)
 
-	model.fit(*dataset["train"], batch_size=batchsize, epochs=epochs, verbose=0, validation_data=dataset["val"],
+	model.fit(*dataset["train"], batch_size=batchsize, epochs=epochs, verbose=verbose, validation_data=dataset["val"],
 	          callbacks=[checkpointer])
 
 	return checkpointPath
@@ -254,7 +266,6 @@ def separateTrain():
 def jointTrainOptuna():
 	loader = DataHandler(epochs=(-0.5, 1), dformat=Formats.tct)
 	patients = [25, 26, 27, 28, 29, 30, 32, 33, 34, 35, 36, 37, 38]
-	patients = [25, 26]
 	patients = [str(elem) for elem in patients]
 
 	logger.add(
@@ -282,19 +293,99 @@ def jointTrainOptuna():
 	optunaTrainer = OptunaTrainer(
 		checkpointPath="./Data/Experiments/Optuna",
 		batchsize=64,
-		epochs=3
+		epochs=200
 	)
 
 	study = optuna.create_study(direction="maximize")
 
-	trainer = partial(optunaTrainer, dataset=trainSet, crossVal=True)
+	trainer = partial(optunaTrainer, dataset=trainSet, crossVal=False)
 
-	study.optimize(trainer, n_trials=3, show_progress_bar=True)
+	study.optimize(trainer, n_trials=250, show_progress_bar=True)
 	studyInfo(
 		study,
 		file="./Data/Experiments/Optuna/optuna_results.csv"
 	)
 
 
+def customParamsTrain():
+	loader = DataHandler(epochs=(-0.5, 1), dformat=Formats.tct)
+	patients = [25, 26, 27, 28, 29, 30, 32, 33, 34, 35, 36, 37, 38]
+	patients = [str(elem) for elem in patients]
+
+	logger.add(
+		sink="./Data/Experiments/Custom/12_04_20.log",
+		level="INFO"
+	)
+
+	epochs = 250
+	batchsize = 16
+	learningRate= 1e-3
+	temporalLength = 40
+	dropoutRate=0.3
+	D = 3
+	poolKernel = 16
+
+	logger.info("Model and train parameters: epochs {}, batchsize {}, learningRate {}, temporalLength {}, "
+	            "dropoutRate {}, D {}, poolKernel {}".
+	            format(epochs, batchsize, learningRate, temporalLength, dropoutRate, D, poolKernel))
+
+	dataset = loader.loadHDF(
+		filepath=r"D:\data\Research\BCI_dataset\NewData\All_patients_sr323.hdf",
+		keys=patients
+	)
+
+	trainSet = {}
+	testSet = {}
+	for key, value in dataset.items():
+		data = value["data"]
+		labels = value["labels"]
+
+		data = np.expand_dims(data, axis=1)
+		dataset = splitDataset(data, labels, trainPart=0.8, valPart=0.0, permutation=True, seed=42069)
+
+		trainSet[key] = dataset["train"]
+		testSet[key] = dataset["test"]
+
+	for key, value in trainSet.items():
+		patientPath = "./Data/Experiments/Custom/{}_patient".format(key)
+		shape = value[0].shape[-2:]
+
+		model = EEGNet(
+			categoriesN=2,
+			electrodes=shape[0],
+			samples=shape[1],
+			temporalLength=temporalLength,
+			dropoutRate=dropoutRate,
+			D=D,
+			poolPad="same",
+			poolKernel=poolKernel
+		)
+
+		model.compile(
+			loss="sparse_categorical_crossentropy",
+			optimizer=tf.optimizers.Adam(learning_rate=learningRate, decay=learningRate / epochs),
+			metrics=["accuracy"]
+		)
+
+		valAUC = train(
+			model=model,
+			dataset=value,
+			weigthsPath=patientPath,
+			epochs=epochs,
+			batchsize=batchsize,
+			crossVal=False,
+			verbose=2
+		)
+
+		testAUC = test(
+			model=model,
+			checkpointPath=os.path.join(patientPath, "best.h5"),
+			dataset=testSet[key],
+			wpath=patientPath
+		)
+
+		logger.info("Patient #{}: val auc {:.2f}, test auc {:.2f}".format(key, valAUC, testAUC))
+
+
 if __name__ == "__main__":
-	jointTrainOptuna()
+	customParamsTrain()
