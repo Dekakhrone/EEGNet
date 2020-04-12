@@ -106,12 +106,12 @@ def permutate(arr, saveOrder=False, seedValue=1234):
 
 def _resample(data, sourceSR, targetSR, axesFormat=Formats.tct):
 	axis = axes[axesFormat].index(0)
-	factor = targetSR / sourceSR
+	_factor = targetSR / sourceSR
 
-	if factor == 1:
+	if _factor == 1:
 		return data
 
-	return resample(data, up=max(1., factor), down=max(1., 1 / factor), npad="auto", axis=axis)
+	return resample(data, up=max(1., _factor), down=max(1., 1 / _factor), npad="auto", axis=axis)
 
 
 class DataHandler:
@@ -149,6 +149,8 @@ class DataHandler:
 
 	def loadMatlab(self, path, sourceSR, targetSR=None, windows=None, baselineWindow=None, shuffle=False, store=False,
 	               name=None):
+		container = {}
+
 		if os.path.isdir(path):
 			positive = loadmat(os.path.join(path, "eegT.mat"))["eegT"]
 			negative = loadmat(os.path.join(path, "eegNT.mat"))["eegNT"]
@@ -184,18 +186,21 @@ class DataHandler:
 			data = permutate(data, saveOrder=True)
 			labels = permutate(labels, saveOrder=True)
 
+
+		if name is None:
+			name = path
+
+		container[name] = {
+			"data": data,
+			"labels": labels,
+			"format": self.format.value,
+			"sample_rate": currentSR
+		}
+
 		if store:
-			if name is None:
-				name = path
+			self.stored = deepcopy(container)
 
-			self.stored[name] = {
-				"data": data,
-				"labels": labels,
-				"format": self.format.value,
-				"sample_rate": currentSR
-			}
-
-		return data, labels
+		return container
 
 
 	def loadHDF(self, filepath, store=False, keys=None):
