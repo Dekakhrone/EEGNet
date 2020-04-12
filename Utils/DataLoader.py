@@ -7,6 +7,8 @@ import h5py
 import numpy as np
 from scipy.io import loadmat
 from mne.filter import resample
+from matplotlib import pyplot as plt
+from math import sqrt
 
 
 EEG_SAMPLE_RATE = 500  # Hz
@@ -255,6 +257,50 @@ class DataHandler:
 		print("Data has been written to {}".format(filepath))
 
 
+def factor(number):
+	number = number if not number % 2 else number + 1
+	f = [(d, number // d) for d in range(2, int(sqrt(number) + 1)) if not number % d]
+
+	return f[-1]
+
+
+def plot(data, labels, wpath, name=None, samples=10):
+	plt.ioff()
+	data = np.squeeze(data)
+
+	trials, channels, time = data.shape
+	rows, cols = factor(channels)
+	time = list(range(time))
+
+	os.makedirs(wpath, exist_ok=True)
+
+	for i, trial in enumerate(data):
+		label = labels[i]
+
+		fig = plt.figure(figsize=(16, 8))
+		plt.title("Trial #{}, label {}".format(i, label))
+
+		axs = fig.subplots(rows, cols)
+		fig.subplots_adjust(hspace=.5, wspace=.001)
+
+		axs = axs.ravel()
+
+		for j, electrode in enumerate(trial):
+			axs[j].grid(which="both")
+			axs[j].plot(time, electrode, "b", label="channel {}".format(j))
+
+		if name is not None:
+			_name, _ = os.path.splitext(name)
+			_name = "{}-trial_{}.png".format(_name, i)
+		else:
+			_name = "trial_{}.png".format(i)
+
+		plt.savefig(os.path.join(wpath, _name))
+
+		if i == samples:
+			break
+
+
 def main():
 	loader = DataHandler(epochs=(-0.5, 1), dformat=Formats.ttc)
 
@@ -271,5 +317,18 @@ def main():
 	loader.loadHDF(os.path.join(wpath, "test_dataset.hdf"), store=True)
 
 
+def testPlot():
+	loader = DataHandler(epochs=(-0.5, 1), dformat=Formats.tct)
+	dataset = loader.loadHDF(
+		filepath=r"D:\data\Research\BCI_dataset\NewData\All_patients_sr323.hdf",
+		keys="25"
+	)
+
+	data = dataset["25"]["data"]
+	labels = dataset["25"]["labels"]
+
+	plot(data, labels, "../Data/Plots")
+
+
 if __name__ == '__main__':
-	main()
+	testPlot()
