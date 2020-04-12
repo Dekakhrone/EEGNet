@@ -28,5 +28,7 @@ def ROC(true, pred, show=False, wpath=None, name=None):
 			name = os.path.splitext(name)[0] + ".png"
 			
 			plt.savefig(os.path.join(wpath, name))
+
+		plt.close()
 			
 	return AUC
