@@ -1,8 +1,9 @@
 import numpy as np
 
-from Utils.DataLoader import permutate, DataHandler
+from Utils.DataLoader import permutate, DataHandler, Formats, plot
 from AudioAugmentation import Augmentations as augs
-from AudioAugmentation.Core.Base import Sequential, NormalizationTypes, AugTypes
+from AudioAugmentation.Core.Base import Sequential
+from AudioAugmentation.Core.Types import NormalizationTypes, AugTypes, Colors
 
 
 class EEGAugmenter(Sequential):
@@ -13,37 +14,58 @@ class EEGAugmenter(Sequential):
 		self.oversample = oversample
 
 
-	def __call__(self, signals, labels):
+	def __call__(self, data, labels, shuffle=False):
 		posIdxs = np.argwhere(labels == 1)
 		negIdxs = np.argwhere(labels == 0)
 
 		oversample = posIdxs if posIdxs.size < negIdxs.size else negIdxs
 		diff = abs(posIdxs.size - negIdxs.size) if self.oversample else 0
 
-		shape = signals.shape if not self.oversample else (2 * (oversample.size + diff), ) + signals.shape[1:]
-		newSignals = np.empty(shape, dtype=signals.dtype)
+		shape = data.shape if not self.oversample else (2 * (oversample.size + diff),) + data.shape[1:]
+		newData = np.empty(shape, dtype=data.dtype)
 		newLabels = np.empty(shape[0], dtype=labels.dtype)
 
-		for t, trial in enumerate(signals):
+		for t, trial in enumerate(data):
 			trial = trial[0]
 			for c, channel in enumerate(trial):
-				newSignals[t, 0, c] = self.apply(channel)
+				newData[t, 0, c] = self.apply(channel)
 
 			newLabels[t] = labels[t]
 
 		oversampleIdxs = np.random.choice(np.ravel(oversample), diff)
 
 		for i, idx in enumerate(oversampleIdxs):
-			trial = signals[idx, 0]
+			trial = data[idx, 0]
 			for c, channel in enumerate(trial):
-				newSignals[len(signals) + i, 0, c] = self.apply(channel)
+				newData[len(data) + i, 0, c] = self.apply(channel)
 
-			newLabels[len(signals) + i] = labels[idx]
+			newLabels[len(data) + i] = labels[idx]
 
-		newSignals = permutate(newSignals, saveOrder=True)
-		newLabels = permutate(newLabels, saveOrder=True)
+		if shuffle:
+			newData = permutate(newData, saveOrder=True)
+			newLabels = permutate(newLabels, saveOrder=True)
 
-		return newSignals, newLabels
+		return newData, newLabels
+
+
+def getAugmenter():
+	seqKwargs = {
+		"normalization": NormalizationTypes.none,
+	    "typeOrder": (AugTypes.audio, ),
+	    "sampleRate": 323,
+	    "oversample": True
+	}
+
+	aug = EEGAugmenter(
+		[
+			augs.LoudnessAug(loudnessFactor=(0.75, 1.25)),
+			augs.ShiftAug(0.03),
+			augs.SyntheticNoiseAug(noiseColor=Colors.white, noiseFactor=(0.25, 0.5)),
+		],
+		**seqKwargs
+	)
+
+	return aug
 
 
 def main():
