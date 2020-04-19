@@ -69,9 +69,7 @@ def getAugmenter():
 
 
 def main():
-	from AudioAugmentation.Augmentations import ShiftAug
-
-	aug = EEGAugmenter([ShiftAug(0.1)], oversample=True, sampleRate=323, normalization=NormalizationTypes.none)
+	aug = getAugmenter()
 
 	data = np.random.randint(1, 100, (100, 1, 19, 93)).astype(np.float32)
 	labels = np.random.randint(0, 2, 100).astype(np.int32)
@@ -80,8 +78,24 @@ def main():
 
 
 def visualizeAugmentations():
-	pass
+	loader = DataHandler(epochs=(-0.5, 1), dformat=Formats.tct)
+
+	dataset = loader.loadHDF(
+		filepath=r"D:\data\Research\BCI_dataset\NewData\All_patients_sr323.hdf",
+		keys="25"
+	)
+
+	data = dataset["25"]["data"]
+	labels = dataset["25"]["labels"]
+
+	plot(data, labels, "../Data/Plots/Clean", samples=3)
+
+	aug = getAugmenter()
+
+	data, labels = aug(data[:, np.newaxis, ...], labels)
+
+	plot(np.squeeze(data), labels, "../Data/Plots/Augmented", samples=3)
 
 
 if __name__ == "__main__":
-	main()
+	visualizeAugmentations()
