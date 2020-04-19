@@ -1,5 +1,6 @@
 import os
 import yaml
+import datetime
 
 import optuna
 import numpy as np
@@ -10,6 +11,7 @@ from tensorflow.keras.callbacks import ModelCheckpoint
 
 from Model import EEGNet
 from Utils.DataLoader import DataHandler, Formats, splitDataset, crossValGenerator
+from Utils.Augmentations import getAugmenter
 from Utils.Metrics import ROC
 
 
@@ -138,7 +140,7 @@ def test(model, checkpointPath, dataset, **kwargs):
 	return auc
 
 
-def train(model, dataset, weigthsPath, epochs=100, batchsize=128, crossVal=False, verbose=0):
+def train(model, dataset, weigthsPath, epochs=100, batchsize=128, crossVal=False, verbose=0, augmenter=None):
 	dataset = splitDataset(*dataset, trainPart=0.8, valPart=0.0)
 
 	trainSet = dataset["train"]
@@ -158,7 +160,8 @@ def train(model, dataset, weigthsPath, epochs=100, batchsize=128, crossVal=False
 			weigthsPath=weigthsPath,
 			epochs=epochs,
 			batchsize=batchsize,
-			verbose=verbose
+			verbose=verbose,
+			augmenter=augmenter
 		)
 
 		auc.append(test(model, checkpointPath, testSet))
@@ -168,13 +171,24 @@ def train(model, dataset, weigthsPath, epochs=100, batchsize=128, crossVal=False
 	return np.mean(auc)
 
 
-def _train(model, dataset, weigthsPath, epochs=100, batchsize=128, verbose=0):
+def _train(model, dataset, weigthsPath, epochs=100, batchsize=128, verbose=0, augmenter=None):
 	os.makedirs(weigthsPath, exist_ok=True)
+
+	trainset = dataset["train"]
+	valset = dataset["val"]
+
+	if augmenter is not None:
+		augmented = [augmenter(*trainset) for _ in range(epochs)]
+
+		trainset = (
+			np.concatenate([data[0] for data in augmented], axis=0),
+			np.concatenate([data[1] for data in augmented], axis=0)
+		)
 
 	checkpointPath = os.path.join(weigthsPath, "best.h5")
 	checkpointer = ModelCheckpoint(filepath=checkpointPath, verbose=verbose, save_best_only=True)
 
-	model.fit(*dataset["train"], batch_size=batchsize, epochs=epochs, verbose=verbose, validation_data=dataset["val"],
+	model.fit(*trainset, batch_size=batchsize, epochs=epochs, verbose=verbose, validation_data=valset,
 	          callbacks=[checkpointer])
 
 	return checkpointPath
@@ -312,8 +326,10 @@ def customParamsTrain():
 	patients = [25, 26, 27, 28, 29, 30, 32, 33, 34, 35, 36, 37, 38]
 	patients = [str(elem) for elem in patients]
 
+	date = str(datetime.date.today())
+
 	logger.add(
-		sink="./Data/Experiments/Custom/12_04_20.log",
+		sink="./Data/Experiments/Custom/{}.log".format(date),
 		level="INFO"
 	)
 
@@ -346,8 +362,10 @@ def customParamsTrain():
 		trainSet[key] = dataset["train"]
 		testSet[key] = dataset["test"]
 
+	augmenter = getAugmenter()
+
 	for key, value in trainSet.items():
-		patientPath = "./Data/Experiments/Custom/{}_patient".format(key)
+		patientPath = "./Data/Experiments/Custom/{}/{}_patient".format(date, key)
 		shape = value[0].shape[-2:]
 
 		model = EEGNet(
@@ -374,7 +392,8 @@ def customParamsTrain():
 			epochs=epochs,
 			batchsize=batchsize,
 			crossVal=False,
-			verbose=2
+			verbose=2,
+			augmenter=augmenter
 		)
 
 		testAUC = test(
