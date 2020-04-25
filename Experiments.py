@@ -14,7 +14,7 @@ from tensorflow.keras.utils import Sequence
 import config
 from Model import EEGNet
 from Utils.DataLoader import DataHandler, Formats, splitDataset, crossValGenerator
-from Utils.Augmentations import getAugmenter, clipAxis
+from Utils.Augmentations import getAugmenter, getOversampler, clipAxis
 from Utils.Metrics import ROC
 
 
@@ -390,6 +390,8 @@ def customParamsTrain():
 		keys=patients
 	)
 
+	oversampler = getOversampler()
+
 	trainSet = {}
 	testSet = {}
 	for key, value in dataset.items():
@@ -397,6 +399,8 @@ def customParamsTrain():
 		labels = value["labels"]
 
 		data = np.expand_dims(data, axis=1)
+		data, labels = oversampler.oversample(data, labels, shuffle=True)
+
 		dataset = splitDataset(data, labels, trainPart=0.8, valPart=0.0, permutation=True, seedValue=42069)
 
 		trainSet[key] = dataset["train"]
@@ -437,7 +441,7 @@ def customParamsTrain():
 			verbose=2,
 			augmenter=augmenter,
 			augProb=0.9,
-			oversample=True,
+			oversample=False,
 			clip=(0.05, 0.35)
 		)
 
