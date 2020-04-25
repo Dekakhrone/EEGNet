@@ -1,4 +1,5 @@
 import os
+import math
 import yaml
 import datetime
 
@@ -8,15 +9,56 @@ import tensorflow as tf
 from loguru import logger
 from functools import partial
 from tensorflow.keras.callbacks import ModelCheckpoint
+from tensorflow.keras.utils import Sequence
 
+import config
 from Model import EEGNet
 from Utils.DataLoader import DataHandler, Formats, splitDataset, crossValGenerator
-from Utils.Augmentations import getAugmenter
+from Utils.Augmentations import getAugmenter, clipAxis
 from Utils.Metrics import ROC
 
 
 gpu = tf.config.experimental.list_physical_devices('GPU')[0]
 tf.config.experimental.set_memory_growth(gpu, True)
+
+
+class DataSequence(Sequence):
+	def __init__(self, dataset, batchSize, sampleRate, augmenter=None, augProb=0.5, oversample=True, clip=(None, None)):
+		self.dataset = dataset
+
+		self.data, self.labels = self.dataset
+
+		self.sampleRate = sampleRate
+
+		self.batchSize = batchSize
+
+		self.augmenter = augmenter
+		self.augProb = augProb
+
+		self.oversample = oversample
+		self.clip = clip
+
+
+	def __len__(self):
+		return math.ceil(len(self.data) / self.batchSize)
+
+
+	def __getitem__(self, idx):
+		data = self.data[idx * self.batchSize:(idx + 1) * self.batchSize]
+		labels = self.labels[idx * self.batchSize:(idx + 1) * self.batchSize]
+
+		data = clipAxis(data, self.clip, self.sampleRate, axis=3)
+
+		return data, labels
+
+
+	def on_epoch_end(self):
+		augment = np.random.choice([True, False], p=[self.augProb, 1 - self.augProb])
+
+		if self.augmenter is not None and augment:
+			self.data, self.labels = self.augmenter(*self.dataset, oversample=self.oversample, shuffle=True)
+		else:
+			self.data, self.labels = self.dataset
 
 
 class OptunaTrainer:
@@ -133,14 +175,16 @@ def test(model, checkpointPath, dataset, **kwargs):
 	model.load_weights(checkpointPath)
 
 	data, labels = dataset
+	data = clipAxis(data, borders=kwargs.get("clip", (None, None)), sampleRate=config.sampleRate, axis=-1)
 
 	pred = model.predict(data)[:, 1]
-	auc = ROC(labels, pred, **kwargs)
+	auc = ROC(labels, pred,
+	          show=kwargs.get("show", False), wpath=kwargs.get("wpath", None), name=kwargs.get("name", None))
 
 	return auc
 
 
-def train(model, dataset, weigthsPath, epochs=100, batchsize=128, crossVal=False, verbose=0, augmenter=None):
+def train(model, dataset, weigthsPath, epochs=100, batchsize=128, crossVal=False, verbose=0, **kwargs):
 	dataset = splitDataset(*dataset, trainPart=0.8, valPart=0.0)
 
 	trainSet = dataset["train"]
@@ -161,35 +205,32 @@ def train(model, dataset, weigthsPath, epochs=100, batchsize=128, crossVal=False
 			epochs=epochs,
 			batchsize=batchsize,
 			verbose=verbose,
-			augmenter=augmenter
+			**kwargs
 		)
 
-		auc.append(test(model, checkpointPath, testSet))
+		auc.append(test(model, checkpointPath, testSet, **kwargs))
 
 		tf.keras.backend.clear_session()
 
 	return np.mean(auc)
 
 
-def _train(model, dataset, weigthsPath, epochs=100, batchsize=128, verbose=0, augmenter=None):
+def _train(model, dataset, weigthsPath, epochs=100, batchsize=128, verbose=0, **kwargs):
 	os.makedirs(weigthsPath, exist_ok=True)
 
 	trainset = dataset["train"]
 	valset = dataset["val"]
 
-	if augmenter is not None:
-		augmented = [augmenter(*trainset) for _ in range(epochs)]
-
-		trainset = (
-			np.concatenate([data[0] for data in augmented], axis=0),
-			np.concatenate([data[1] for data in augmented], axis=0)
-		)
+	trainset = DataSequence(trainset, batchsize, config.sampleRate, **kwargs)
+	valset = (
+		clipAxis(valset[0], borders=kwargs.get("clip", (None, None)), sampleRate=config.sampleRate, axis=-1),
+		valset[1]
+	)
 
 	checkpointPath = os.path.join(weigthsPath, "best.h5")
 	checkpointer = ModelCheckpoint(filepath=checkpointPath, verbose=verbose, save_best_only=True)
 
-	model.fit(*trainset, batch_size=batchsize, epochs=epochs, verbose=verbose, validation_data=valset,
-	          callbacks=[checkpointer])
+	model.fit(trainset, epochs=epochs, verbose=verbose, validation_data=valset, callbacks=[checkpointer])
 
 	return checkpointPath
 
@@ -251,25 +292,20 @@ def separateTrain():
 
 		data = np.expand_dims(data, axis=1)
 
-		dataset = splitDataset(data, labels, trainPart=0.8, valPart=0.1, permutation=True, seed=42069)
+		dataset = splitDataset(data, labels, trainPart=0.8, valPart=0.1, permutation=True, seedValue=42069)
 
-		config = {
-			"train_config": {
-				"epochs": 500,
-				"batchsize": 64
-			},
-			"paths": {
-				"checkpoint": "./Data/Experiments/Optuna/%d" % pat,
-				"logs": "./Data/Experiments/Optuna/%d/Logs" % pat
-			}
-		}
-
-		optunaTrainer = OptunaTrainer(config=config, dataset=dataset)
+		optunaTrainer = OptunaTrainer(
+			checkpointPath="./Data/Experiments/Optuna/%d" % pat,
+			epochs=500,
+			batchsize=64,
+			logPath="./Data/Experiments/Optuna/%d/Logs" % pat
+		)
 
 		study = optuna.create_study(direction="maximize")
+		trainer = partial(optunaTrainer, dataset=dataset, crossVal=False)
 
 		try:
-			study.optimize(optunaTrainer, n_trials=700, show_progress_bar=True)
+			study.optimize(trainer, n_trials=700, show_progress_bar=True)
 
 			logger.info("Optuna train has been finished for patient #{}", pat)
 			studyInfo(study)
@@ -299,7 +335,7 @@ def jointTrainOptuna():
 		labels = value["labels"]
 
 		data = np.expand_dims(data, axis=1)
-		dataset = splitDataset(data, labels, trainPart=0.8, valPart=0.0, permutation=True, seed=42069)
+		dataset = splitDataset(data, labels, trainPart=0.8, valPart=0.0, permutation=True, seedValue=42069)
 
 		trainSet[key] = dataset["train"]
 		testSet[key] = dataset["test"]
@@ -327,9 +363,13 @@ def customParamsTrain():
 	patients = [str(elem) for elem in patients]
 
 	date = str(datetime.date.today())
+	time = datetime.datetime.now().time()
+	time = "{}-{}".format(time.hour, time.minute)
+
+	experimentFolder = "./Data/Experiments/{}/{}".format(date, time)
 
 	logger.add(
-		sink="./Data/Experiments/Custom/{}.log".format(date),
+		sink=os.path.join(experimentFolder, ".log"),
 		level="INFO"
 	)
 
@@ -346,7 +386,7 @@ def customParamsTrain():
 	            format(epochs, batchsize, learningRate, temporalLength, dropoutRate, D, poolKernel))
 
 	dataset = loader.loadHDF(
-		filepath=r"D:\data\Research\BCI_dataset\NewData\All_patients_sr323.hdf",
+		filepath=r"D:\data\Research\BCI_dataset\NewData\All_patients_sr323_ext_win.hdf",
 		keys=patients
 	)
 
@@ -357,7 +397,7 @@ def customParamsTrain():
 		labels = value["labels"]
 
 		data = np.expand_dims(data, axis=1)
-		dataset = splitDataset(data, labels, trainPart=0.8, valPart=0.0, permutation=True, seed=42069)
+		dataset = splitDataset(data, labels, trainPart=0.8, valPart=0.0, permutation=True, seedValue=42069)
 
 		trainSet[key] = dataset["train"]
 		testSet[key] = dataset["test"]
@@ -365,8 +405,10 @@ def customParamsTrain():
 	augmenter = getAugmenter()
 
 	for key, value in trainSet.items():
-		patientPath = "./Data/Experiments/Custom/{}/{}_patient".format(date, key)
-		shape = value[0].shape[-2:]
+		patientPath = os.path.join(experimentFolder, "{}_patient".format(key))
+		shape = list(value[0].shape[-2:])
+
+		shape[1] = int(config.window[1] * config.sampleRate) - int(config.window[0] * config.sampleRate)
 
 		model = EEGNet(
 			categoriesN=2,
@@ -393,14 +435,18 @@ def customParamsTrain():
 			batchsize=batchsize,
 			crossVal=False,
 			verbose=2,
-			augmenter=augmenter
+			augmenter=augmenter,
+			augProb=0.9,
+			oversample=True,
+			clip=(0.05, 0.35)
 		)
 
 		testAUC = test(
 			model=model,
 			checkpointPath=os.path.join(patientPath, "best.h5"),
 			dataset=testSet[key],
-			wpath=patientPath
+			wpath=patientPath,
+			clip=(0.05, 0.35)
 		)
 
 		logger.info("Patient #{}: val auc {:.2f}, test auc {:.2f}".format(key, valAUC, testAUC))
