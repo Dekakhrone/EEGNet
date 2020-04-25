@@ -25,7 +25,7 @@ axes = {
 }
 
 
-def splitDataset(data, labels, trainPart=0.8, valPart=0.2, permutation=True, seed=None):
+def splitDataset(data, labels, trainPart=0.8, valPart=0.2, permutation=True, seedValue=None):
 	assert labels.shape[0] == data.shape[0]
 	assert trainPart + valPart <= 1
 
@@ -41,11 +41,11 @@ def splitDataset(data, labels, trainPart=0.8, valPart=0.2, permutation=True, see
 		ratio = parts.get(part)
 		end = start + round(ratio * length)
 
-		seed = randint(0, 2**16) if seed is None else seed
+		seedValue = randint(0, 2 ** 16) if seedValue is None else seedValue
 
 		dataset[part] = (
-			data[start:end] if not permutation else permutate(data[start:end], saveOrder=True, seedValue=seed),
-			labels[start:end] if not permutation else permutate(labels[start:end], saveOrder=True, seedValue=seed)
+			data[start:end] if not permutation else permutate(data[start:end], saveOrder=True, seedValue=seedValue),
+			labels[start:end] if not permutation else permutate(labels[start:end], saveOrder=True, seedValue=seedValue)
 		)
 
 		start = end
@@ -53,11 +53,11 @@ def splitDataset(data, labels, trainPart=0.8, valPart=0.2, permutation=True, see
 	return dataset
 
 
-def crossValGenerator(data, labels, trainPart=0.8, valPart=0.2, permutation=True, seed=None):
+def crossValGenerator(data, labels, trainPart=0.8, valPart=0.2, permutation=True, seedValue=None):
 	assert labels.shape[0] == data.shape[0]
 	assert trainPart + valPart <= 1
 
-	seed = randint(0, 2 ** 16) if seed is None else seed
+	seedValue = randint(0, 2 ** 16) if seedValue is None else seedValue
 
 	length = labels.shape[0]
 	valSamples = int(length * valPart)
@@ -74,12 +74,12 @@ def crossValGenerator(data, labels, trainPart=0.8, valPart=0.2, permutation=True
 
 		dataset = {
 			"train": (
-				trainData if not permutation else permutate(trainData, saveOrder=True, seedValue=seed),
-				trainLabels if not permutation else permutate(trainLabels, saveOrder=True, seedValue=seed)
+				trainData if not permutation else permutate(trainData, saveOrder=True, seedValue=seedValue),
+				trainLabels if not permutation else permutate(trainLabels, saveOrder=True, seedValue=seedValue)
 			),
 			"val": (
-				valData if not permutation else permutate(valData, saveOrder=True, seedValue=seed),
-				valLabels if not permutation else permutate(valLabels, saveOrder=True, seedValue=seed)
+				valData if not permutation else permutate(valData, saveOrder=True, seedValue=seedValue),
+				valLabels if not permutation else permutate(valLabels, saveOrder=True, seedValue=seedValue)
 			)
 		}
 
@@ -185,7 +185,6 @@ class DataHandler:
 		if shuffle:
 			data = permutate(data, saveOrder=True)
 			labels = permutate(labels, saveOrder=True)
-
 
 		if name is None:
 			name = path
