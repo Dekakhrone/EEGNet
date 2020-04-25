@@ -1,24 +1,19 @@
 import numpy as np
 
+import config
 from Utils.DataLoader import permutate, DataHandler, Formats, plot
 from AudioAugmentation import Augmentations as augs
-from AudioAugmentation.Core.Base import Sequential
+from AudioAugmentation.Core.Base import Sequential, AudioAugmenter
 from AudioAugmentation.Core.Types import NormalizationTypes, AugTypes, Colors
 
 
 class EEGAugmenter(Sequential):
-	def __init__(self, augmenters, randomOrder=False, returnSpectrogram=False, normalization=NormalizationTypes.origin,
-	             typeOrder=(AugTypes.audio, AugTypes.spectrogram), sampleRate=16000, clip=(None, None), **kwargs):
-
-		super().__init__(augmenters, randomOrder, returnSpectrogram, normalization, typeOrder, sampleRate, **kwargs)
-		self.clip = clip
-
-
-	def __call__(self, data, labels, oversample=False, shuffle=False):
-		oversample, diff = getIdxToOversample(labels)
+	def __call__(self, data, labels, oversample=False, shuffle=False, clip=(None, None)):
+		scarce, diff = getIdxToOversample(labels)
+		assert oversample and len(scarce) > 0
 		n = 2 if oversample else 1
 
-		shape = (2 * oversample.size + n * diff, ) + data.shape[1:]
+		shape = (2 * scarce.size + n * diff, ) + data.shape[1:]
 		newData = np.empty(shape, dtype=data.dtype)
 		newLabels = np.empty(shape[0], dtype=labels.dtype)
 
@@ -29,7 +24,7 @@ class EEGAugmenter(Sequential):
 
 			newLabels[t] = labels[t]
 
-		oversampleIdxs = np.random.choice(np.ravel(oversample), oversample * diff)
+		oversampleIdxs = np.random.choice(scarce, oversample * diff)
 
 		for i, idx in enumerate(oversampleIdxs):
 			trial = data[idx, 0]
@@ -42,29 +37,37 @@ class EEGAugmenter(Sequential):
 			newData = permutate(newData, saveOrder=True)
 			newLabels = permutate(newLabels, saveOrder=True)
 
-		_min = int((self.clip[0] or 0) * self.sampleRate)
-		_max = int((self.clip[1] or len(data) // self.sampleRate) * self.sampleRate)
-		newData = newData[..., _min:_max]
+		newData = clipAxis(newData, clip, self.sampleRate, axis=3)
 
 		return newData, newLabels
+
+
+def clipAxis(data, borders, sampleRate, axis=0):
+	axis = np.ndim(data) + axis if axis < 0 else axis
+
+	_min = int((borders[0] or 0) * sampleRate)
+	_max = int((borders[1] or data.shape[axis] / sampleRate) * sampleRate)
+
+	slices = tuple(slice(0, dim) if i != axis else slice(_min, _max) for i, dim in enumerate(data.shape))
+
+	return data[slices]
 
 
 def getIdxToOversample(labels):
 	posIdxs = np.argwhere(labels == 1)
 	negIdxs = np.argwhere(labels == 0)
 
-	oversample = posIdxs if posIdxs.size < negIdxs.size else negIdxs
+	scarce = posIdxs if posIdxs.size < negIdxs.size else negIdxs
 	diff = abs(posIdxs.size - negIdxs.size)
 
-	return oversample, diff
+	return np.ravel(scarce), diff
 
 
 def getAugmenter():
 	seqKwargs = {
 		"normalization": NormalizationTypes.none,
 	    "typeOrder": (AugTypes.audio, ),
-	    "sampleRate": 323,
-		"clip": (0.05, 0.35)
+	    "sampleRate": config.sampleRate
 	}
 
 	aug = EEGAugmenter(
