@@ -42,6 +42,37 @@ class EEGAugmenter(Sequential):
 		return newData, newLabels
 
 
+class Sin(AudioAugmenter):
+	def __init__(self, name=None, factor=(0.5, 2.0)):
+		super().__init__(name)
+
+		self.factor = factor
+
+
+	def _getSin(self, size):
+		X = np.linspace(-3, 3, size, dtype=np.float32).reshape(-1, 1)
+
+		a = np.random.choice(np.arange(10), 1)[0]
+		p = np.random.exponential(4, 1)[0]
+
+		def func(x):
+			from math import sin
+			return a * sin(p * x)
+
+		f = np.vectorize(func)
+		return f(X)
+
+
+	def apply(self, data, sampleRate, returnSpectrogram=False, **kwargs):
+		self._validateData(data)
+		multiplier = self._setParam(self.factor)
+
+		sin = np.ravel(self._getSin(data.size))
+		data += sin * multiplier
+
+		return data
+
+
 def clipAxis(data, borders, sampleRate, axis=0):
 	axis = np.ndim(data) + axis if axis < 0 else axis
 
@@ -72,9 +103,10 @@ def getAugmenter():
 
 	aug = EEGAugmenter(
 		[
-			augs.LoudnessAug(loudnessFactor=(0.75, 1.25)),
-			augs.ShiftAug(0.03),
-			augs.SyntheticNoiseAug(noiseColor=Colors.white, noiseFactor=(0.25, 0.5))
+			# augs.LoudnessAug(loudnessFactor=(0.75, 1.25)),
+			Sin(factor=(0.5, 0.8)),
+			augs.ShiftAug(shiftFactor=(0.01, 0.03))
+			# augs.SyntheticNoiseAug(noiseColor=Colors.white, noiseFactor=(0.25, 0.5)),
 		],
 		**seqKwargs
 	)
