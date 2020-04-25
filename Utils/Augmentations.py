@@ -9,13 +9,8 @@ from AudioAugmentation.Core.Types import NormalizationTypes, AugTypes, Colors
 
 class EEGAugmenter(Sequential):
 	def __call__(self, data, labels, oversample=False, shuffle=False, clip=(None, None)):
-		scarce, diff = getIdxToOversample(labels)
-		assert oversample and len(scarce) > 0
-		n = 2 if oversample else 1
-
-		shape = (2 * scarce.size + n * diff, ) + data.shape[1:]
-		newData = np.empty(shape, dtype=data.dtype)
-		newLabels = np.empty(shape[0], dtype=labels.dtype)
+		newData = np.empty(data.shape, dtype=data.dtype)
+		newLabels = np.empty(labels.shape[0], dtype=labels.dtype)
 
 		for t, trial in enumerate(data):
 			trial = trial[0]
@@ -24,14 +19,9 @@ class EEGAugmenter(Sequential):
 
 			newLabels[t] = labels[t]
 
-		oversampleIdxs = np.random.choice(scarce, oversample * diff)
-
-		for i, idx in enumerate(oversampleIdxs):
-			trial = data[idx, 0]
-			for c, channel in enumerate(trial):
-				newData[len(data) + i, 0, c] = self.apply(channel)
-
-			newLabels[len(data) + i] = labels[idx]
+		if oversample:
+			scarce, _ = getIdxToOversample(labels)
+			newData, newLabels = self.oversample(newData, newLabels, shuffle, clip, determined=scarce)
 
 		if shuffle:
 			newData = permutate(newData, saveOrder=True)
@@ -40,6 +30,39 @@ class EEGAugmenter(Sequential):
 		newData = clipAxis(newData, clip, self.sampleRate, axis=3)
 
 		return newData, newLabels
+
+
+	def oversample(self, data, labels, shuffle=False, clip=(None, None), determined=None):
+		scarce, diff = getIdxToOversample(labels)
+		scarce = scarce if determined is None else determined
+
+		if len(scarce) == 0:
+			return data, labels
+
+		oversampleIdxs = np.random.choice(scarce, diff)
+
+		shape = (diff, ) + data.shape[1:]
+
+		overData = np.empty(shape, dtype=data.dtype)
+		overLabels = np.empty(shape[0], dtype=labels.dtype)
+
+		for i, idx in enumerate(oversampleIdxs):
+			trial = data[idx, 0]
+			for c, channel in enumerate(trial):
+				overData[i, 0, c] = self.apply(channel)
+
+			overLabels[i] = labels[idx]
+
+		data = np.concatenate((data, overData), axis=0)
+		labels = np.concatenate((labels, overLabels), axis=0)
+
+		if shuffle:
+			data = permutate(data, saveOrder=True)
+			labels = permutate(labels, saveOrder=True)
+
+		data = clipAxis(data, clip, self.sampleRate, axis=3)
+
+		return data, labels
 
 
 class Sin(AudioAugmenter):
@@ -110,6 +133,18 @@ def getAugmenter():
 		],
 		**seqKwargs
 	)
+
+	return aug
+
+
+def getOversampler():
+	seqKwargs = {
+		"normalization": NormalizationTypes.none,
+		"typeOrder": (AugTypes.pseudo, ),
+		"sampleRate": config.sampleRate
+	}
+
+	aug = EEGAugmenter(augmenters=[augs.Identity()], **seqKwargs)
 
 	return aug
 
