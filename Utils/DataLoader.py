@@ -197,7 +197,7 @@ class DataHandler:
 		}
 
 		if store:
-			self.stored = deepcopy(container)
+			self.stored[name] = deepcopy(container[name])
 
 		return container
 
@@ -208,6 +208,7 @@ class DataHandler:
 		container = {}
 		try:
 			for name in file.keys():
+				keys = file.keys() if keys is None else keys
 				if name not in keys:
 					continue
 
