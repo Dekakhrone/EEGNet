@@ -7,9 +7,12 @@ from tensorflow.python.keras.callbacks import ModelCheckpoint
 from tensorflow.python.keras.utils.data_utils import Sequence
 
 import config
-from Utils.Augmentations import clipAxis
+from Utils.Augmentations import clipAxis, getOversampler, prob2bool
 from Utils.DataLoader import splitDataset, crossValGenerator
-from Utils.Metrics import ROC
+from Utils.Metrics import ROC, PR
+
+
+oversampler = getOversampler()
 
 
 class DataSequence(Sequence):
@@ -43,7 +46,7 @@ class DataSequence(Sequence):
 
 
 	def on_epoch_end(self):
-		augment = np.random.choice([True, False], p=[self.augProb, 1 - self.augProb])
+		augment = prob2bool(self.augProb)
 
 		if self.augmenter is not None and augment:
 			self.data, self.labels = self.augmenter(*self.dataset, oversample=self.oversample, shuffle=True)
@@ -61,14 +64,15 @@ def test(model, checkpointPath, dataset, **kwargs):
 	auc = ROC(labels, pred,
 	          show=kwargs.get("show", False), wpath=kwargs.get("wpath", None), name=kwargs.get("name", None))
 
-	return auc
+	precision, recall, f1 = PR(labels, pred)
 
+	return auc, precision, recall, f1
 
 def train(model, dataset, weigthsPath, epochs=100, batchsize=128, crossVal=False, verbose=0, **kwargs):
 	dataset = splitDataset(*dataset, trainPart=0.8, valPart=0.0)
 
 	trainSet = dataset["train"]
-	testSet = dataset["test"]
+	testSet = oversampler.oversample(*dataset["test"]) # it's necessary to get balanced test set always
 
 	if crossVal:
 		trainSet = crossValGenerator(*trainSet, trainPart=0.8, valPart=0.2)
@@ -76,7 +80,7 @@ def train(model, dataset, weigthsPath, epochs=100, batchsize=128, crossVal=False
 		trainSet = splitDataset(*trainSet, trainPart=0.8, valPart=0.2)
 		trainSet = [trainSet]
 
-	auc = []
+	metrics = []
 	for i, set_ in enumerate(trainSet):
 		checkpointPath = _train(
 			model=model,
@@ -88,24 +92,26 @@ def train(model, dataset, weigthsPath, epochs=100, batchsize=128, crossVal=False
 			**kwargs
 		)
 
-		auc.append(test(model, checkpointPath, testSet, **kwargs))
+		metrics.append(test(model, checkpointPath, testSet, **kwargs))
 
 		tf.keras.backend.clear_session()
 
-	return np.mean(auc)
+	metrics = np.array(metrics)
 
+	return np.mean(metrics, axis=0)
 
 def _train(model, dataset, weigthsPath, epochs=100, batchsize=128, verbose=0, **kwargs):
 	os.makedirs(weigthsPath, exist_ok=True)
 
 	trainset = dataset["train"]
-	valset = dataset["val"]
+	valset = oversampler.oversample(*dataset["val"]) # it's necessary to get balanced val set always
+	labels = trainset[1]
 
 	trainset = DataSequence(trainset, batchsize, config.sampleRate, **kwargs)
 	valset = (
 		clipAxis(valset[0], borders=kwargs.get("clip", (None, None)), sampleRate=config.sampleRate, axis=-1),
 		valset[1]
-	)
+	) # in case if augmentations was applied before
 
 	checkpointPath = os.path.join(weigthsPath, "best.h5")
 	checkpointer = ModelCheckpoint(filepath=checkpointPath, verbose=verbose, save_best_only=True)

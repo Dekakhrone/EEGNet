@@ -4,6 +4,7 @@ import numpy as np
 import tensorflow as tf
 from loguru import logger
 
+import config
 from Train import train
 from Model import EEGNet
 
@@ -17,38 +18,44 @@ class OptunaTrainer:
 		self.batchsize = batchsize
 
 
-	def __call__(self, trial, dataset, crossVal=False):
+	def __call__(self, trial, dataset, crossVal=False, **kwargs):
 		if isinstance(dataset, tuple):
 			dataset = {
 				"noname": dataset
 			}
 
-		info = "Trial #{} auc values:".format(trial.number)
-		auc = []
+		info = "Trial #{} metric values:".format(trial.number)
+		metrics = []
 		for key, value in dataset.items():
-			shape = value[0].shape[-2:]
+			shape = list(value[0].shape[-2:])
+			shape[1] = int(config.window[1] * config.sampleRate) - int(config.window[0] * config.sampleRate)
+
 			model = self.buildModel(trial, shape)
-			_auc = train(
+			auc, precision, recall, f1 = train(
 				model=model,
 				dataset=value,
-				weigthsPath=self.checkpointPath,
+				weightsPath=self.checkpointPath,
 				epochs=self.epochs,
 				batchsize=self.batchsize,
-				crossVal=crossVal
+				crossVal=crossVal,
+				**kwargs
 			)
-			info += "\t{}: {:.2f}".format(key, auc)
+			info += "\t{}: auc {:.2f}\tpr {:.2f}\trec {:.2f}\tf1 {:.2f}".format(key, auc, precision, recall, f1)
 
-			auc.append(_auc)
+			metrics.append((auc, precision, recall, f1))
 
-		mean = np.mean(auc).round(2)
-		median = np.median(auc).round(2)
+		metrics = np.array(metrics)
 
-		info += "\t Mean value: {}\tMedian value {}".format(mean, median)
+		mean = np.mean(metrics, axis=0).round(2)
+		median = np.median(metrics, axis=0).round(2)
+
+		for i, metric in enumerate(["auc", "precision", "recall", "f1"]):
+			info += "\nMetric - {}. Mean: {}\tMedian: {}".format(metric, mean[i], median[i])
 
 		logger.info(info)
 		logger.info(trial.params)
 
-		return mean
+		return mean[0]
 
 
 	@staticmethod
@@ -68,6 +75,16 @@ class OptunaTrainer:
 		optimizer = getattr(tf.optimizers, optimizer_selected)(**kwargs)
 
 		return optimizer
+
+
+	@staticmethod
+	def chooseLoss(trial):
+		loss_functions = ["binary_crossentropy", "sigmoid_focal_crossentropy"]
+
+		loss_selected = trial.suggest_categorical("loss", loss_functions)
+		loss = getattr(tf.losses, loss_selected)
+
+		return loss
 
 
 	def buildModel(self, trial, shape):
@@ -91,9 +108,10 @@ class OptunaTrainer:
 		)
 
 		optimizer = self.chooseOptimizer(trial)
+		loss = self.chooseLoss(trial)
 
 		model.compile(
-			loss="sparse_categorical_crossentropy",
+			loss=loss,
 			optimizer=optimizer,
 			metrics=["accuracy"]
 		)
