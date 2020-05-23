@@ -80,13 +80,16 @@ def jointTrainOptuna():
 	patients = [25, 26, 27, 28, 29, 30, 32, 33, 34, 35, 36, 37, 38]
 	patients = [str(elem) for elem in patients]
 
+	date = str(datetime.date.today())
+	experimentFolder = "./Data/Experiments/Optuna/{}".format(date)
+
 	logger.add(
-		sink="./Data/Experiments/Optuna/optuna.log",
+		sink=os.path.join(experimentFolder, ".log"),
 		level="INFO"
 	)
 
 	dataset = loader.loadHDF(
-		filepath=r"D:\data\Research\BCI_dataset\NewData\All_patients_sr323.hdf",
+		filepath=r"D:\data\Research\BCI_dataset\NewData\All_patients_sr323_ext_win.hdf",
 		keys=patients
 	)
 
@@ -97,20 +100,33 @@ def jointTrainOptuna():
 		labels = value["labels"]
 
 		data = np.expand_dims(data, axis=1)
+
 		dataset = splitDataset(data, labels, trainPart=0.8, valPart=0.0, permutation=True, seedValue=42069)
 
 		trainSet[key] = dataset["train"]
 		testSet[key] = dataset["test"]
 
+	augmenter = getAugmenter()
+	augmenter.setGlobalSeed(42069)
+
 	optunaTrainer = OptunaTrainer(
 		checkpointPath="./Data/Experiments/Optuna",
 		batchsize=64,
-		epochs=200
+		epochs=200,
 	)
 
 	study = optuna.create_study(direction="maximize")
 
-	trainer = partial(optunaTrainer, dataset=trainSet, crossVal=False)
+	trainer = partial(
+		optunaTrainer,
+		dataset=trainSet,
+		crossVal=False,
+		weightedLoss=True,
+		augmenter=augmenter,
+		augProb=0.8,
+		oversample=False,
+		clip=(0.05, 0.35)
+	)
 
 	study.optimize(trainer, n_trials=250, show_progress_bar=True)
 	studyInfo(
@@ -135,12 +151,12 @@ def customParamsTrain():
 		level="INFO"
 	)
 
-	epochs = 250
-	batchsize = 16
+	epochs = 50
+	batchsize = 64
 	learningRate= 1e-3
-	temporalLength = 40
-	dropoutRate=0.3
-	D = 3
+	temporalLength = 32
+	dropoutRate=0.5
+	D = 2
 	poolKernel = 16
 
 	logger.info("Model and train parameters: epochs {}, batchsize {}, learningRate {}, temporalLength {}, "
@@ -152,8 +168,6 @@ def customParamsTrain():
 		keys=patients
 	)
 
-	oversampler = getOversampler()
-
 	trainSet = {}
 	testSet = {}
 	for key, value in dataset.items():
@@ -161,9 +175,8 @@ def customParamsTrain():
 		labels = value["labels"]
 
 		data = np.expand_dims(data, axis=1)
-		data, labels = oversampler.oversample(data, labels, shuffle=True)
 
-		dataset = splitDataset(data, labels, trainPart=0.8, valPart=0.0, permutation=True, seedValue=42069)
+		dataset = splitDataset(data, labels, trainPart=0.9, valPart=0.0, permutation=True, seedValue=42069)
 
 		trainSet[key] = dataset["train"]
 		testSet[key] = dataset["test"]
@@ -172,8 +185,8 @@ def customParamsTrain():
 
 	for key, value in trainSet.items():
 		patientPath = os.path.join(experimentFolder, "{}_patient".format(key))
-		shape = list(value[0].shape[-2:])
 
+		shape = list(value[0].shape[-2:])
 		shape[1] = int(config.window[1] * config.sampleRate) - int(config.window[0] * config.sampleRate)
 
 		model = EEGNet(
@@ -188,7 +201,7 @@ def customParamsTrain():
 		)
 
 		model.compile(
-			loss="sparse_categorical_crossentropy",
+			loss="binary_crossentropy",
 			optimizer=tf.optimizers.Adam(learning_rate=learningRate, decay=learningRate / epochs),
 			metrics=["accuracy"]
 		)
@@ -196,10 +209,11 @@ def customParamsTrain():
 		valAUC = train(
 			model=model,
 			dataset=value,
-			weigthsPath=patientPath,
+			weightsPath=patientPath,
 			epochs=epochs,
 			batchsize=batchsize,
 			crossVal=False,
+			weightedLoss=True,
 			verbose=2,
 			augmenter=augmenter,
 			augProb=0.9,
