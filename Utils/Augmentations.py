@@ -3,7 +3,7 @@ import numpy as np
 import config
 from Utils.DataLoader import permutate, DataHandler, Formats, plot
 from AudioAugmentation import Augmentations as augs
-from AudioAugmentation.Core.Base import Sequential, AudioAugmenter
+from AudioAugmentation.Core.Base import Sequential, AudioAugmenter, rand, determine
 from AudioAugmentation.Core.Types import NormalizationTypes, AugTypes, Colors
 
 
@@ -32,6 +32,7 @@ class EEGAugmenter(Sequential):
 		return newData, newLabels
 
 
+	@determine
 	def oversample(self, data, labels, shuffle=False, clip=(None, None), determined=None):
 		scarce, diff = getIdxToOversample(labels)
 		scarce = scarce if determined is None else determined
@@ -39,7 +40,7 @@ class EEGAugmenter(Sequential):
 		if len(scarce) == 0:
 			return data, labels
 
-		oversampleIdxs = np.random.choice(scarce, diff)
+		oversampleIdxs = rand.choice(scarce, diff)
 
 		shape = (diff, ) + data.shape[1:]
 
@@ -94,6 +95,10 @@ class Sin(AudioAugmenter):
 		data += sin * multiplier
 
 		return data
+
+
+def prob2bool(prob):
+	return rand.choice([True, False], p=[prob, 1 - prob])
 
 
 def clipAxis(data, borders, sampleRate, axis=0):
@@ -155,7 +160,16 @@ def main():
 	data = np.random.randint(1, 100, (100, 1, 19, 93)).astype(np.float32)
 	labels = np.random.randint(0, 2, 100).astype(np.int32)
 
-	aug(data, labels)
+	# aug(data, labels)
+
+	for i, s in enumerate([123] * 3):
+		data, labels = aug(data, labels, shuffle=True, detSeed=s)
+
+		if i != 0:
+			assert prevData == data
+			assert prevLabels == labels
+
+		prevData, prevLabels = data, labels
 
 
 def visualizeAugmentations():
