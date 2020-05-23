@@ -68,7 +68,9 @@ def test(model, checkpointPath, dataset, **kwargs):
 
 	return auc, precision, recall, f1
 
-def train(model, dataset, weigthsPath, epochs=100, batchsize=128, crossVal=False, verbose=0, **kwargs):
+
+def train(model, dataset, weightsPath, epochs=100, batchsize=128, crossVal=False, weightedLoss=True,
+          verbose=0, **kwargs):
 	dataset = splitDataset(*dataset, trainPart=0.8, valPart=0.0)
 
 	trainSet = dataset["train"]
@@ -85,10 +87,11 @@ def train(model, dataset, weigthsPath, epochs=100, batchsize=128, crossVal=False
 		checkpointPath = _train(
 			model=model,
 			dataset=set_,
-			weigthsPath=weigthsPath,
+			weightsPath=weightsPath,
 			epochs=epochs,
 			batchsize=batchsize,
 			verbose=verbose,
+			weightedLoss=weightedLoss,
 			**kwargs
 		)
 
@@ -100,8 +103,9 @@ def train(model, dataset, weigthsPath, epochs=100, batchsize=128, crossVal=False
 
 	return np.mean(metrics, axis=0)
 
-def _train(model, dataset, weigthsPath, epochs=100, batchsize=128, verbose=0, **kwargs):
-	os.makedirs(weigthsPath, exist_ok=True)
+
+def _train(model, dataset, weightsPath, epochs=100, batchsize=128, weightedLoss=True, verbose=0, **kwargs):
+	os.makedirs(weightsPath, exist_ok=True)
 
 	trainset = dataset["train"]
 	valset = oversampler.oversample(*dataset["val"]) # it's necessary to get balanced val set always
@@ -113,9 +117,19 @@ def _train(model, dataset, weigthsPath, epochs=100, batchsize=128, verbose=0, **
 		valset[1]
 	) # in case if augmentations was applied before
 
-	checkpointPath = os.path.join(weigthsPath, "best.h5")
+	checkpointPath = os.path.join(weightsPath, "best.h5")
 	checkpointer = ModelCheckpoint(filepath=checkpointPath, verbose=verbose, save_best_only=True)
 
-	model.fit(trainset, epochs=epochs, verbose=verbose, validation_data=valset, callbacks=[checkpointer])
+	_, counts = np.unique(labels, return_counts=True)
+	if weightedLoss and model.loss == "binary_crossentropy":
+		sampleWeights = [1 - count / np.sum(counts) for count in counts]
+		sampleWeights = [coef / np.max(sampleWeights) for coef in sampleWeights]
+	else:
+		sampleWeights = [1 for _ in counts]
+
+	sampleWeights = np.tile(sampleWeights, batchsize).reshape(batchsize, len(counts))
+
+	model.fit(trainset, epochs=epochs, verbose=verbose, validation_data=valset, callbacks=[checkpointer],
+	          loss_weights=sampleWeights)
 
 	return checkpointPath
