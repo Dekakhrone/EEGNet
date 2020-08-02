@@ -307,27 +307,50 @@ def plot(data, labels, wpath, name=None, samples=10):
 
 
 def main():
-	loader = DataHandler(epochs=(-0.5, 1), dformat=Formats.ttc)
-
 	path = r'D:\data\Research\BCI_dataset\NewData'
+	loader = DataHandler(epochs=(-0.5, 1), dformat=Formats.tct)
 
-	for idx in ["25", "26"]:
-		_ = loader.loadMatlab(os.path.join(path, idx), sourceSR=500, targetSR=323, windows=[(0.2, 0.5)],
-		                         baselineWindow=(0.2, 0.3), store=True, name=idx)
+	patients = [25, 26, 27, 28, 29, 30, 32, 33, 34, 35, 36, 37, 38]
 
-	wpath = r'D:\data\Research\BCI_dataset\NewData'
-	loader.saveHDF(loader.stored, wpath, "test_dataset.hdf", meta=False)
+	for pat in patients:
+		print("\rPatient #{} is being processed".format(pat), end="")
+		loader.loadMatlab(
+			path=os.path.join(path, str(pat)),
+			sourceSR=500,
+			targetSR=323,
+			windows=[(0.15, 0.55)],
+			baselineWindow=(0.2, 0.3),
+			shuffle=True,
+			store=True,
+			name=pat
+		)
+
+	filename = "All_patients_sr323_ext_win.hdf"
+	loader.saveHDF(
+		data=loader.stored,
+		dirpath=path,
+		filename=filename
+	)
 
 	loader.stored = {}
-	loader.loadHDF(os.path.join(wpath, "test_dataset.hdf"), store=True)
+	loader.loadHDF(os.path.join(path, filename), store=True)
 
 
 def testPlot():
 	loader = DataHandler(epochs=(-0.5, 1), dformat=Formats.tct)
-	dataset = loader.loadHDF(
-		filepath=r"D:\data\Research\BCI_dataset\NewData\All_patients_sr323.hdf",
-		keys="25"
+
+	dataset = loader.loadMatlab(
+		path=r"D:\data\Research\BCI_dataset\NewData\25",
+		sourceSR=EEG_SAMPLE_RATE,
+		windows=[(0.2, 0.5)],
+		baselineWindow=(0.2, 0.3),
+		name="25"
 	)
+
+	# dataset = loader.loadHDF(
+	# 	filepath=r"D:\data\Research\BCI_dataset\NewData\All_patients_sr323.hdf",
+	# 	keys="25"
+	# )
 
 	data = dataset["25"]["data"]
 	labels = dataset["25"]["labels"]
@@ -336,4 +359,4 @@ def testPlot():
 
 
 if __name__ == '__main__':
-	testPlot()
+	main()

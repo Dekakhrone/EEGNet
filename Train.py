@@ -9,7 +9,7 @@ from tensorflow.python.keras.utils.data_utils import Sequence
 import config
 from Utils.Augmentations import clipAxis, getOversampler, prob2bool
 from Utils.DataLoader import splitDataset, crossValGenerator
-from Utils.Metrics import ROC, PR
+from Utils.Metrics import ROC, average_precision
 
 
 oversampler = getOversampler()
@@ -64,9 +64,9 @@ def test(model, checkpointPath, dataset, **kwargs):
 	auc = ROC(labels, pred,
 	          show=kwargs.get("show", False), wpath=kwargs.get("wpath", None), name=kwargs.get("name", None))
 
-	precision, recall, f1 = PR(labels, pred)
+	precision = average_precision(labels, pred)
 
-	return auc, precision, recall, f1
+	return auc, precision
 
 
 def train(model, dataset, weightsPath, epochs=100, batchsize=128, crossVal=False, weightedLoss=True,

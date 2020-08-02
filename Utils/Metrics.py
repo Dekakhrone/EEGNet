@@ -1,6 +1,6 @@
 import os
 
-from sklearn.metrics import roc_curve, auc, precision_score, recall_score, f1_score
+from sklearn.metrics import roc_curve, auc, average_precision_score
 from matplotlib import pyplot as plt
 
 
@@ -34,9 +34,5 @@ def ROC(true, pred, show=False, wpath=None, name=None):
 	return AUC
 
 
-def PR(true, pred):
-	precision = precision_score(true, pred)
-	recall = recall_score(true, pred)
-	f1 = f1_score(true, pred)
-
-	return precision, recall, f1
+def average_precision(true, pred):
+	return average_precision_score(true, pred)
