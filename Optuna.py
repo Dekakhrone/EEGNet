@@ -2,6 +2,7 @@ import os
 
 import numpy as np
 import tensorflow as tf
+import tensorflow_addons as tfa
 from loguru import logger
 
 import config
@@ -24,14 +25,14 @@ class OptunaTrainer:
 				"noname": dataset
 			}
 
-		info = "Trial #{} metric values:".format(trial.number)
+		info = "Trial #{} metric values:\n".format(trial.number)
 		metrics = []
 		for key, value in dataset.items():
 			shape = list(value[0].shape[-2:])
 			shape[1] = int(config.window[1] * config.sampleRate) - int(config.window[0] * config.sampleRate)
 
 			model = self.buildModel(trial, shape)
-			auc, precision, recall, f1 = train(
+			auc, precision = train(
 				model=model,
 				dataset=value,
 				weightsPath=self.checkpointPath,
@@ -40,16 +41,16 @@ class OptunaTrainer:
 				crossVal=crossVal,
 				**kwargs
 			)
-			info += "\t{}: auc {:.2f}\tpr {:.2f}\trec {:.2f}\tf1 {:.2f}".format(key, auc, precision, recall, f1)
+			info += "{}: auc {:.2f} pr {:.2f}\t".format(key, auc, precision)
 
-			metrics.append((auc, precision, recall, f1))
+			metrics.append((auc, precision))
 
 		metrics = np.array(metrics)
 
 		mean = np.mean(metrics, axis=0).round(2)
 		median = np.median(metrics, axis=0).round(2)
 
-		for i, metric in enumerate(["auc", "precision", "recall", "f1"]):
+		for i, metric in enumerate(["auc", "precision"]):
 			info += "\nMetric - {}. Mean: {}\tMedian: {}".format(metric, mean[i], median[i])
 
 		logger.info(info)
@@ -79,10 +80,13 @@ class OptunaTrainer:
 
 	@staticmethod
 	def chooseLoss(trial):
-		loss_functions = ["binary_crossentropy", "sigmoid_focal_crossentropy"]
+		loss_functions = {
+			"binary_crossentropy": tf,
+			"sigmoid_focal_crossentropy": tfa
+		}
 
-		loss_selected = trial.suggest_categorical("loss", loss_functions)
-		loss = getattr(tf.losses, loss_selected)
+		loss_selected = trial.suggest_categorical("loss", list(loss_functions.keys()))
+		loss = getattr(loss_functions[loss_selected].losses, loss_selected)
 
 		return loss
 
