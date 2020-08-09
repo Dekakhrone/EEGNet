@@ -121,7 +121,7 @@ def _train(model, dataset, weightsPath, epochs=100, batchsize=128, weightedLoss=
 	checkpointer = ModelCheckpoint(filepath=checkpointPath, verbose=verbose, save_best_only=True)
 
 	_, counts = np.unique(labels, return_counts=True)
-	if weightedLoss and model.loss == "binary_crossentropy":
+	if weightedLoss and model.loss == tf.keras.losses.binary_crossentropy:
 		sampleWeights = [1 - count / np.sum(counts) for count in counts]
 		sampleWeights = [coef / np.max(sampleWeights) for coef in sampleWeights]
 	else:

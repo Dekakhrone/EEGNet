@@ -28,6 +28,9 @@ class OptunaTrainer:
 		info = "Trial #{} metric values:\n".format(trial.number)
 		metrics = []
 		for key, value in dataset.items():
+			if "augmenter" in kwargs:
+				kwargs["augmenter"].setState(False)
+
 			shape = list(value[0].shape[-2:])
 			shape[1] = int(config.window[1] * config.sampleRate) - int(config.window[0] * config.sampleRate)
 
